@@ -187,3 +187,43 @@ gh api repos/katzkawai/kklab-flet-todo/pages/builds/latest
 | 画面が真っ白 / リソースが 404 | `base href` がルート `/` のまま | `--base-url kklab-flet-todo` でビルド、または `docs/index.html` の `<base href>` を `/kklab-flet-todo/` に修正 |
 | `git push` が拒否される | `app.zip` が 100MB 超（`.venv` 混入） | 上記「3.」で `.venv`/`.git` を除去 |
 | アプリは出るがデータが消える | localStorage 未保存 | `SharedPreferences` の利用を確認（本リポジトリは対応済み） |
+| 更新したのに古い版が表示される | ブラウザの HTTP キャッシュ（後述） | スーパーリロード or シークレット or 10分待つ |
+
+### キャッシュについて（「更新が反映されない」とき）
+
+「スーパーリロードでは直るが、再アクセスすると古い版に戻る」場合、原因はほぼ **ブラウザの HTTP キャッシュ**です。
+GitHub Pages のキャッシュは3層あり、本リポジトリでの実測結果は次の通りです。
+
+| 層 | 場所 | 本リポジトリの状態 | 対処 |
+|----|------|-------------------|------|
+| ① GitHub の CDN（Fastly） | GitHub 側 | TTL 約10分。手動 purge 不可 | 再デプロイ（空コミット可）で更新 |
+| ② Service Worker | ブラウザ | **登録0個**（自己解除型で無害） | 通常は対処不要 |
+| ③ ブラウザ HTTP キャッシュ | ブラウザ | 全ファイル `Cache-Control: max-age=600`（10分） | スーパーリロード / シークレット / DevTools の Disable cache |
+
+**ポイント**
+
+- **Service Worker は原因ではありません**。本アプリの `flutter_service_worker.js` は `fetch` ハンドラを持たず、
+  `activate` で自分自身を `unregister()` する「自己解除型」です（実測でも登録0個・Cache Storage 空）。
+- 古い版が出る正体は **③ の HTTP キャッシュ（`max-age=600`）**。GitHub Pages はこの `Cache-Control`
+  ヘッダを**変更できない**ため、リピート訪問者には最大10分間、古い版がブラウザキャッシュから配信されます。
+- ただし **10分経てば etag 再検証で自動的に最新化**されるので、古い版が永久に固定されることはありません。
+
+**開発・確認時のおすすめ**
+
+```text
+- DevTools (F12) → Network → ☑ Disable cache  … 開発中はこれが最も確実
+- シークレット / プライベートウィンドウで開く … キャッシュの影響を受けない
+- 10分待つ … 放置でも自動的に最新化される
+```
+
+GitHub の配信内容そのものを直接確認したいときは、キャッシュ回避クエリ付きで取得します。
+
+```bash
+curl -sIL "https://katzkawai.github.io/kklab-flet-todo/?cb=$(date +%s)" | grep -iE "^HTTP|cache-control|etag"
+```
+
+**即時反映が必須な場合**
+
+`max-age=600` の10分が許容できない場合、GitHub Pages ではヘッダを制御できないため、
+`_headers` ファイルでキャッシュ制御できる **Cloudflare Pages** や **Netlify** へ同じ `docs/` を配信するのが確実です
+（例: `index.html` は `no-cache`、ハッシュ付き資産は長期キャッシュ）。
