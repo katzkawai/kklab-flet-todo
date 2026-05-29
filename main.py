@@ -1,4 +1,8 @@
+import json
+
 import flet as ft
+
+STORAGE_KEY = "kklab.todo.tasks.v1"
 
 COLORS = [
     ft.Colors.RED_100,
@@ -12,16 +16,17 @@ COLORS = [
 
 
 class Task(ft.Column):
-    def __init__(self, task_name, task_delete, color):
+    def __init__(self, task_name, task_delete, color, task_change, completed=False):
         super().__init__()
-        self.completed = False
+        self.completed = completed
         self.task_name = task_name
         self.task_delete = task_delete
+        self.task_change = task_change
         self.color = color
 
     def build(self):
         self.display_task = ft.Checkbox(
-            value=False, on_change=self.status_changed,
+            value=self.completed, on_change=self.status_changed,
         )
         self.task_label = ft.Text(value=self.task_name, size=24, color=ft.Colors.ON_SURFACE)
         self.edit_name = ft.TextField(expand=1, text_size=24)
@@ -84,20 +89,34 @@ class Task(ft.Column):
         self.edit_view.visible = True
         self.update()
 
-    def save_clicked(self, e):
+    async def save_clicked(self, e):
         self.task_label.value = self.edit_name.value
         self.display_view.visible = True
         self.edit_view.visible = False
         self.update()
+        await self.task_change()
 
-    def status_changed(self, e):
+    async def status_changed(self, e):
         self.completed = self.display_task.value
+        await self.task_change()
 
-    def delete_clicked(self, e):
-        self.task_delete(self)
+    async def delete_clicked(self, e):
+        await self.task_delete(self)
+
+    def to_dict(self):
+        name = getattr(self, "task_label", None)
+        return {
+            "name": name.value if name is not None else self.task_name,
+            "completed": self.completed,
+            "color": self.color,
+        }
 
 
 class TodoApp(ft.Column):
+    def __init__(self, prefs):
+        super().__init__()
+        self.prefs = prefs
+
     def build(self):
         self.new_task = ft.TextField(
             key="new_task",
@@ -173,23 +192,60 @@ class TodoApp(ft.Column):
             ),
         ]
 
+    def did_mount(self):
+        # build() 完了後・ページ接続後に保存済みデータを非同期で読み込む。
+        self.page.run_task(self.load_tasks)
+
     async def add_clicked(self, e):
         if self.new_task.value:
             color = COLORS[self._color_index % len(COLORS)]
             self._color_index += 1
-            task = Task(self.new_task.value, self.task_delete, color)
+            task = Task(self.new_task.value, self.task_delete, color, self.save_tasks)
             self.tasks.controls.append(task)
             self.new_task.value = ""
             await self.new_task.focus()
             self.update()
+            await self.save_tasks()
 
-    def task_delete(self, task):
+    async def task_delete(self, task):
         self.tasks.controls.remove(task)
+        self.update()
+        await self.save_tasks()
 
-    def clear_clicked(self, e):
-        for task in self.tasks.controls[:]:
-            if task.completed:
-                self.task_delete(task)
+    async def clear_clicked(self, e):
+        self.tasks.controls[:] = [
+            task for task in self.tasks.controls if not task.completed
+        ]
+        self.update()
+        await self.save_tasks()
+
+    async def save_tasks(self):
+        if self.prefs is None:
+            return
+        data = [task.to_dict() for task in self.tasks.controls]
+        await self.prefs.set(STORAGE_KEY, json.dumps(data, ensure_ascii=False))
+
+    async def load_tasks(self):
+        if self.prefs is None:
+            return
+        raw = await self.prefs.get(STORAGE_KEY)
+        if not raw:
+            return
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            return
+        for item in data:
+            task = Task(
+                item.get("name", ""),
+                self.task_delete,
+                item.get("color", COLORS[0]),
+                self.save_tasks,
+                completed=item.get("completed", False),
+            )
+            self.tasks.controls.append(task)
+        self._color_index = len(self.tasks.controls)
+        self.update()
 
     def before_update(self):
         status = self.filter.tabs[self.filter_tabs.selected_index].label
@@ -205,7 +261,7 @@ class TodoApp(ft.Column):
         self.items_left.value = f"残り{count}件"
 
 
-def main(page: ft.Page):
+async def main(page: ft.Page):
     page.title = "やることリスト"
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.scroll = ft.ScrollMode.ADAPTIVE
@@ -219,7 +275,10 @@ def main(page: ft.Page):
             label_large=ft.TextStyle(size=24),
         ),
     )
-    page.add(ft.SafeArea(content=TodoApp()))
+    # SharedPreferences はブラウザの localStorage に永続化される。
+    # インスタンス化時に page へ自動登録されるため参照を保持しておく。
+    prefs = ft.SharedPreferences()
+    page.add(ft.SafeArea(content=TodoApp(prefs)))
 
 
 if __name__ == "__main__":
