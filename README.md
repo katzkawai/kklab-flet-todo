@@ -58,6 +58,31 @@ kklab-flet-todo/
 - 別の端末・別のブラウザとはデータは共有されません
 - ブラウザのサイトデータを消去すると消えます
 
+### ⚠️ オリジン（`http`/`https`・ドメイン）が変わるとデータは別管理になる
+
+localStorage は **`scheme://host`（オリジン）単位**で完全に分離されます。同じサイトでも次は**別のストレージ**です。
+
+- `http://katzkawai.org/...` と `https://katzkawai.org/...` … **http と https は別オリジン**
+- `katzkawai.github.io/...` と `katzkawai.org/...` … ドメインが違えば別オリジン
+
+そのため **HTTPS 強制（Enforce HTTPS）が無効**だと、アクセス時のプロトコルが変わるたびにタスクが
+「消えた / 戻った」ように見えます（実際は別オリジンのストレージを見ているだけ）。
+
+**対策（本リポジトリでは設定済み）**: GitHub の **Settings → Pages → ☑ Enforce HTTPS** を有効化し、
+全アクセスを `https://katzkawai.org/...` の単一オリジンに統一する。API でも設定・確認できます。
+
+```bash
+# 有効化
+gh api -X PUT repos/katzkawai/kklab-flet-todo/pages -F https_enforced=true
+# 確認（https_enforced: true になっていること）
+gh api repos/katzkawai/kklab-flet-todo/pages --jq '.https_enforced, .html_url'
+# http が https へ 301 転送されるか確認
+curl -sI "http://katzkawai.org/kklab-flet-todo/" | grep -iE "^HTTP|^location"
+```
+
+> 利用者へのお願い: ブックマークは `https://katzkawai.org/kklab-flet-todo/` にしておく
+> （`https://katzkawai.github.io/kklab-flet-todo/` でも自動で https の独自ドメインへ転送されます）。
+
 ---
 
 ## GitHub Pages の作成・更新手順
@@ -187,6 +212,7 @@ gh api repos/katzkawai/kklab-flet-todo/pages/builds/latest
 | 画面が真っ白 / リソースが 404 | `base href` がルート `/` のまま | `--base-url kklab-flet-todo` でビルド、または `docs/index.html` の `<base href>` を `/kklab-flet-todo/` に修正 |
 | `git push` が拒否される | `app.zip` が 100MB 超（`.venv` 混入） | 上記「3.」で `.venv`/`.git` を除去 |
 | アプリは出るがデータが消える | localStorage 未保存 | `SharedPreferences` の利用を確認（本リポジトリは対応済み） |
+| リロードでタスクが消える/復活する | `http`/`https` でストレージが別（オリジン分裂） | **Enforce HTTPS** を有効化（[データ永続化について](#データ永続化について)参照） |
 | 更新したのに古い版が表示される | ブラウザの HTTP キャッシュ（後述） | スーパーリロード or シークレット or 10分待つ |
 
 ### キャッシュについて（「更新が反映されない」とき）
