@@ -1,1 +1,4 @@
-docs/assets/app/app.zip
+# ローカルビルド成果物
+build/
+.venv/
+__pycache__/
